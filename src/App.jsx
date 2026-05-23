@@ -5,7 +5,7 @@ import {
   Gamepad2, Plus, ChevronDown, UserPlus, LogOut,
   Send, Compass, Footprints, Flower2, Train,
   Coffee, Cookie, Utensils, BookOpen, Star, Heart,
-  Tent, Camera, Eye, Cog, RotateCcw
+  Tent, Camera, Eye, Cog, RotateCcw, Info, Download, CalendarDays
 } from 'lucide-react';
 
 /* ----------------------------------------------------------------
@@ -576,6 +576,202 @@ const initials = (name) => {
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
+const BASE_LABELS = {
+  kotagiri: 'Kotagiri',
+  coonoor: 'Coonoor',
+};
+
+const TRIP_START_YEAR = 2026;
+const SLOT_TIMES = {
+  morning: ['08:00', '11:30'],
+  afternoon: ['13:00', '17:00'],
+  night: ['19:00', '22:00'],
+};
+
+const IMAGE_BY_TAG = {
+  train: 'https://images.unsplash.com/photo-1474487548417-781cb71495f3?auto=format&fit=crop&w=900&q=80',
+  factory: 'https://images.unsplash.com/photo-1597318181409-cf64d0b5d8a2?auto=format&fit=crop&w=900&q=80',
+  tea: 'https://images.unsplash.com/photo-1564890369478-c89ca6d9cde9?auto=format&fit=crop&w=900&q=80',
+  waterfall: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=80',
+  garden: 'https://images.unsplash.com/photo-1501004318641-b39e6451bec6?auto=format&fit=crop&w=900&q=80',
+  boating: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=900&q=80',
+  shopping: 'https://images.unsplash.com/photo-1516594798947-e65505dbb29d?auto=format&fit=crop&w=900&q=80',
+  museum: 'https://images.unsplash.com/photo-1566054757965-8c4085344c96?auto=format&fit=crop&w=900&q=80',
+  history: 'https://images.unsplash.com/photo-1524230572899-a752b3835840?auto=format&fit=crop&w=900&q=80',
+  viewpoint: 'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=900&q=80',
+  forest: 'https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=900&q=80',
+  lunch: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=900&q=80',
+  default: 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?auto=format&fit=crop&w=900&q=80',
+};
+
+function getDaysForBase(base) {
+  return base === 'coonoor' ? COONOOR_DAYS : KOTAGIRI_DAYS;
+}
+
+function votePercent(count, total) {
+  if (!total) return 0;
+  return Math.round((count / total) * 100);
+}
+
+function getTargetKey(base, dayId, slotKey, optionId) {
+  return `${base}:${dayId}:${slotKey}:${optionId}`;
+}
+
+function getOptionVotes(votes, base, dayId, slotKey, optionId) {
+  return Object.keys(votes[getTargetKey(base, dayId, slotKey, optionId)] || {});
+}
+
+function getWinningBases(baseVotes, profiles) {
+  const choices = ['kotagiri', 'coonoor'];
+  const counts = choices.map((base) => ({
+    base,
+    count: profiles.filter((p) => baseVotes[p.id] === base).length,
+  }));
+  const max = Math.max(...counts.map((item) => item.count));
+  if (max === 0) return choices;
+  return counts.filter((item) => item.count === max).map((item) => item.base);
+}
+
+function getWinningOptions(day, base, slotKey, votes) {
+  const scored = day.slots[slotKey].map((option) => ({
+    option,
+    count: getOptionVotes(votes, base, day.id, slotKey, option.id).length,
+  }));
+  const max = Math.max(...scored.map((item) => item.count));
+  if (max === 0) return scored.map((item) => item.option);
+  return scored.filter((item) => item.count === max).map((item) => item.option);
+}
+
+function getPersonalOptions(day, base, slotKey, votes, comments, profileId) {
+  const voted = day.slots[slotKey].filter((option) => {
+    const key = getTargetKey(base, day.id, slotKey, option.id);
+    return Boolean(votes[key]?.[profileId]);
+  });
+  if (voted.length > 0) return voted;
+
+  const commented = day.slots[slotKey].filter((option) => {
+    const key = getTargetKey(base, day.id, slotKey, option.id);
+    return comments.some((comment) => comment.userId === profileId && comment.target === key);
+  });
+  return commented.length > 0 ? commented : day.slots[slotKey];
+}
+
+function getInfoForOption(option, base) {
+  const tags = option.tags || [];
+  const tag = tags.find((item) => IMAGE_BY_TAG[item]) || tags.find((item) => item.startsWith('hike')) || 'default';
+  const search = encodeURIComponent(`${option.title} ${BASE_LABELS[base]} Nilgiris`);
+  return {
+    image: IMAGE_BY_TAG[tag] || IMAGE_BY_TAG.default,
+    mapUrl: `https://www.google.com/maps/search/?api=1&query=${search}`,
+    caption: option.notes || 'Open the pin before leaving, because timings and access can change in the hills.',
+  };
+}
+
+function formatDayDate(day) {
+  return `${day.dayOfWeek}, ${day.date}, ${TRIP_START_YEAR}`;
+}
+
+function itineraryLines({ bases, votes, comments, profiles, gameVotes = {}, mode = 'final', profileId = null }) {
+  const lines = [];
+  bases.forEach((base) => {
+    lines.push(`${BASE_LABELS[base]} itinerary`);
+    getDaysForBase(base).forEach((day, idx) => {
+      lines.push(`Day ${idx + 1} - ${formatDayDate(day)} - ${day.theme}`);
+      ['morning', 'afternoon', 'night'].forEach((slotKey) => {
+        const options = mode === 'personal'
+          ? getPersonalOptions(day, base, slotKey, votes, comments, profileId)
+          : getWinningOptions(day, base, slotKey, votes);
+        lines.push(`${SLOT_META[slotKey].label}: ${options.map((option) => option.title).join(' / ')}`);
+      });
+    });
+    lines.push('');
+  });
+  const topGames = VILLA_GAMES
+    .map((game) => ({ game, count: Object.keys(gameVotes[game.id] || {}).length }))
+    .filter((item) => item.count > 0)
+    .sort((a, b) => b.count - a.count);
+  if (topGames.length > 0 && profiles.length > 0) {
+    lines.push(`Villa games: ${topGames.map(({ game }) => game.name).join(', ')}`);
+  }
+  return lines;
+}
+
+function downloadBlob(filename, mimeType, content) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function downloadFinalPdf({ bases, votes, comments, profiles, gameVotes }) {
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const lines = itineraryLines({ bases, votes, comments, profiles, gameVotes });
+  let y = 56;
+  doc.setFont('times', 'bold');
+  doc.setFontSize(20);
+  doc.text('Nilgiri Final Itinerary', 48, y);
+  y += 28;
+  doc.setFont('times', 'normal');
+  doc.setFontSize(10);
+  doc.text(`Generated from latest live votes on ${new Date().toLocaleString('en-IN')}`, 48, y);
+  y += 28;
+  doc.setFontSize(11);
+  lines.forEach((line) => {
+    const wrapped = doc.splitTextToSize(line, 500);
+    wrapped.forEach((part) => {
+      if (y > 780) {
+        doc.addPage();
+        y = 56;
+      }
+      doc.text(part, 48, y);
+      y += 16;
+    });
+    if (!line) y += 6;
+  });
+  doc.save('nilgiri-final-itinerary.pdf');
+}
+
+function downloadFinalCalendar({ bases, votes, comments, profiles }) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  const escapeIcs = (value) => String(value).replace(/\\/g, '\\\\').replace(/,/g, '\\,').replace(/;/g, '\\;').replace(/\n/g, '\\n');
+  const events = [];
+
+  bases.forEach((base) => {
+    getDaysForBase(base).forEach((day) => {
+      const dayNumber = Number(day.date.replace(/\D/g, ''));
+      const mmdd = `${TRIP_START_YEAR}06${String(dayNumber).padStart(2, '0')}`;
+      ['morning', 'afternoon', 'night'].forEach((slotKey) => {
+        const options = getWinningOptions(day, base, slotKey, votes);
+        const [start, end] = SLOT_TIMES[slotKey];
+        const uid = `${base}-${day.id}-${slotKey}@nilgiri-family-trip`;
+        events.push([
+          'BEGIN:VEVENT',
+          `UID:${uid}`,
+          `DTSTAMP:${stamp}`,
+          `DTSTART;TZID=Asia/Kolkata:${mmdd}T${start.replace(':', '')}00`,
+          `DTEND;TZID=Asia/Kolkata:${mmdd}T${end.replace(':', '')}00`,
+          `SUMMARY:${escapeIcs(`${SLOT_META[slotKey].label}: ${options.map((option) => option.title).join(' / ')}`)}`,
+          `DESCRIPTION:${escapeIcs(`${BASE_LABELS[base]} base. Generated from latest live votes. ${options.map((option) => option.sub).join(' | ')}`)}`,
+          `LOCATION:${escapeIcs(`${BASE_LABELS[base]}, Nilgiris`)}`,
+          'END:VEVENT',
+        ].join('\r\n'));
+      });
+    });
+  });
+
+  downloadBlob(
+    'nilgiri-final-itinerary.ics',
+    'text/calendar;charset=utf-8',
+    ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Nilgiri Family Trip//Live Planner//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', ...events, 'END:VCALENDAR'].join('\r\n')
+  );
+}
+
 /* ----------------------------------------------------------------
    SMALL COMPONENTS
 ---------------------------------------------------------------- */
@@ -918,7 +1114,7 @@ function BaseCard({ base, isActive, isMyChoice, voters, onPick, onView, totalPro
               {voters.length}
             </span>
             <span style={{ fontFamily: 'Spectral, serif', fontSize: 12, opacity: 0.7, letterSpacing: 1 }} className="uppercase">
-              vote{voters.length === 1 ? '' : 's'}
+              vote{voters.length === 1 ? '' : 's'} · {votePercent(voters.length, totalProfiles)}%
             </span>
             {voters.length > 0 && (
               <div className="ml-2">
@@ -965,11 +1161,14 @@ function OptionCard({
   option, slotKey, dayId, base,
   voters, allProfiles, currentUserId,
   onVote, comments, onAddComment,
-  slotTint,
+  slotTint, totalProfiles,
 }) {
   const [showComments, setShowComments] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
   const [draft, setDraft] = useState('');
   const IconComp = ICONS[option.icon] || Star;
+  const info = getInfoForOption(option, base);
+  const percent = votePercent(voters.length, totalProfiles);
 
   const isMyVote = voters.some((v) => v.id === currentUserId);
 
@@ -1003,9 +1202,26 @@ function OptionCard({
             <IconComp size={18} />
           </div>
           <div className="flex-1 min-w-0">
-            <h4 style={{ fontFamily: 'Fraunces, serif', fontSize: 18, fontWeight: 500, color: P.ink, lineHeight: 1.2 }}>
-              {option.title}
-            </h4>
+            <div className="flex items-start gap-2">
+              <h4 style={{ fontFamily: 'Fraunces, serif', fontSize: 18, fontWeight: 500, color: P.ink, lineHeight: 1.2, flex: 1 }}>
+                {option.title}
+              </h4>
+              <button
+                onClick={() => setShowInfo(true)}
+                aria-label={`More info about ${option.title}`}
+                title="More info, image and map pin"
+                className="shrink-0 inline-flex items-center justify-center rounded-full"
+                style={{
+                  width: 26,
+                  height: 26,
+                  color: P.deepTea,
+                  background: P.paperDark,
+                  border: `1px solid ${P.border}`,
+                }}
+              >
+                <Info size={15} />
+              </button>
+            </div>
             <div className="mt-1 flex items-center gap-2 flex-wrap">
               <span style={{ fontFamily: 'Spectral, serif', fontSize: 12, color: P.midTea, fontStyle: 'italic' }}>
                 {option.dur}
@@ -1061,9 +1277,14 @@ function OptionCard({
               <div className="flex items-center gap-2">
                 <AvatarStack profiles={voters} size={22} max={5} />
                 <span style={{ fontFamily: 'Spectral, serif', fontSize: 12, color: P.midTea }}>
-                  {voters.length} vote{voters.length === 1 ? '' : 's'}
+                  {voters.length} vote{voters.length === 1 ? '' : 's'} · {percent}%
                 </span>
               </div>
+            )}
+            {voters.length === 0 && totalProfiles > 0 && (
+              <span style={{ fontFamily: 'Spectral, serif', fontSize: 12, color: P.midTea }}>
+                0 votes · 0%
+              </span>
             )}
           </div>
 
@@ -1143,6 +1364,43 @@ function OptionCard({
           </div>
         )}
       </div>
+      {showInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(26, 31, 26, 0.55)' }} onClick={() => setShowInfo(false)}>
+          <div
+            className="w-full max-w-lg rounded-lg overflow-hidden"
+            style={{ background: P.paper, border: `1px solid ${P.border}`, boxShadow: `0 24px 80px ${P.shadowStrong}` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img src={info.image} alt={option.title} className="w-full" style={{ height: 220, objectFit: 'cover' }} />
+            <div className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 24, fontWeight: 500, color: P.ink }}>
+                    {option.title}
+                  </h3>
+                  <p style={{ fontFamily: 'Spectral, serif', fontSize: 14, color: P.midTea, lineHeight: 1.55, marginTop: 6 }}>
+                    {option.sub}
+                  </p>
+                </div>
+                <button onClick={() => setShowInfo(false)} className="px-2" style={{ color: P.midTea, fontSize: 20 }}>x</button>
+              </div>
+              <div className="mt-3 px-3 py-2 rounded" style={{ background: P.paperDark, border: `1px dashed ${P.border}`, fontFamily: 'Spectral, serif', fontSize: 13, color: P.midTea }}>
+                {info.caption}
+              </div>
+              <a
+                href={info.mapUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded"
+                style={{ background: P.deepTea, color: P.paper, fontFamily: 'Spectral, serif', fontSize: 14 }}
+              >
+                <MapPin size={15} />
+                Open location pin
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1268,6 +1526,7 @@ function DayCard({ day, dayIndex, base, isOpen, onToggle, profiles, votes, curre
                         comments={optComments}
                         onAddComment={(text) => onAddComment(targetKey, text)}
                         slotTint={slot.tint}
+                        totalProfiles={profiles.length}
                       />
                     );
                   })}
@@ -1278,6 +1537,185 @@ function DayCard({ day, dayIndex, base, isOpen, onToggle, profiles, votes, curre
         </div>
       )}
     </div>
+  );
+}
+
+function SmallOption({ option, base, count, totalProfiles, comments = [] }) {
+  const [showInfo, setShowInfo] = useState(false);
+  const info = getInfoForOption(option, base);
+  const IconComp = ICONS[option.icon] || Star;
+
+  return (
+    <div className="rounded p-3" style={{ background: P.paper, border: `1px solid ${P.borderSoft}` }}>
+      <div className="flex items-start gap-3">
+        <div className="shrink-0 rounded" style={{ background: P.paperDark, color: P.deepTea, padding: 7 }}>
+          <IconComp size={15} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start gap-2">
+            <div style={{ fontFamily: 'Fraunces, serif', fontSize: 16, color: P.ink, lineHeight: 1.2, flex: 1 }}>
+              {option.title}
+            </div>
+            <button
+              onClick={() => setShowInfo(true)}
+              className="inline-flex items-center justify-center rounded-full"
+              style={{ width: 24, height: 24, border: `1px solid ${P.border}`, color: P.deepTea, background: P.paperDark }}
+              title="More info, image and map pin"
+              aria-label={`More info about ${option.title}`}
+            >
+              <Info size={13} />
+            </button>
+          </div>
+          <div style={{ fontFamily: 'Spectral, serif', fontSize: 12, color: P.midTea, marginTop: 3 }}>
+            {option.dur}
+            {typeof count === 'number' && (
+              <span> · {count} vote{count === 1 ? '' : 's'} · {votePercent(count, totalProfiles)}%</span>
+            )}
+          </div>
+          <p style={{ fontFamily: 'Spectral, serif', fontSize: 13, color: P.midTea, lineHeight: 1.45, marginTop: 5 }}>
+            {option.sub}
+          </p>
+          {comments.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {comments.map((comment) => (
+                <div key={comment.id} style={{ fontFamily: 'Spectral, serif', fontSize: 12, color: P.rust, fontStyle: 'italic' }}>
+                  “{comment.text}”
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      {showInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: 'rgba(26, 31, 26, 0.55)' }} onClick={() => setShowInfo(false)}>
+          <div className="w-full max-w-lg rounded-lg overflow-hidden" style={{ background: P.paper, border: `1px solid ${P.border}`, boxShadow: `0 24px 80px ${P.shadowStrong}` }} onClick={(e) => e.stopPropagation()}>
+            <img src={info.image} alt={option.title} className="w-full" style={{ height: 210, objectFit: 'cover' }} />
+            <div className="p-5">
+              <div className="flex items-start justify-between gap-3">
+                <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 24, fontWeight: 500, color: P.ink }}>{option.title}</h3>
+                <button onClick={() => setShowInfo(false)} className="px-2" style={{ color: P.midTea, fontSize: 20 }}>x</button>
+              </div>
+              <p style={{ fontFamily: 'Spectral, serif', fontSize: 14, color: P.midTea, lineHeight: 1.55, marginTop: 6 }}>
+                {option.sub}
+              </p>
+              <a href={info.mapUrl} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded" style={{ background: P.deepTea, color: P.paper, fontFamily: 'Spectral, serif', fontSize: 14 }}>
+                <MapPin size={15} />
+                Open location pin
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItineraryView({ title, eyebrow, description, bases, votes, comments, profiles, gameVotes, mode = 'final', selectedProfileId, onSelectedProfileChange }) {
+  const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId);
+
+  return (
+    <section className="space-y-5">
+      <div className="flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <div style={{ fontFamily: 'Spectral, serif', fontSize: 11, letterSpacing: 3, color: P.midTea }} className="uppercase">
+            {eyebrow}
+          </div>
+          <h2 style={{ fontFamily: 'Fraunces, serif', fontSize: 'clamp(26px, 4vw, 36px)', fontWeight: 400, lineHeight: 1.1 }}>
+            {title}
+          </h2>
+          <p style={{ fontFamily: 'Spectral, serif', fontSize: 14, color: P.midTea, fontStyle: 'italic', marginTop: 2 }}>
+            {description}
+          </p>
+        </div>
+        {mode === 'personal' && (
+          <select
+            value={selectedProfileId || ''}
+            onChange={(e) => onSelectedProfileChange(e.target.value)}
+            className="px-3 py-2 rounded"
+            style={{ background: P.paperDark, border: `1px solid ${P.border}`, color: P.ink, fontFamily: 'Spectral, serif' }}
+          >
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {mode === 'final' && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={() => downloadFinalPdf({ bases, votes, comments, profiles, gameVotes })} className="inline-flex items-center gap-2 px-4 py-2 rounded" style={{ background: P.deepTea, color: P.paper, fontFamily: 'Spectral, serif', fontSize: 14 }}>
+            <Download size={15} />
+            Download PDF
+          </button>
+          <button onClick={() => downloadFinalCalendar({ bases, votes, comments, profiles })} className="inline-flex items-center gap-2 px-4 py-2 rounded" style={{ background: P.paperDark, color: P.deepTea, border: `1px solid ${P.border}`, fontFamily: 'Spectral, serif', fontSize: 14 }}>
+            <CalendarDays size={15} />
+            Download calendar file
+          </button>
+        </div>
+      )}
+
+      {bases.map((base) => (
+        <div key={base} className="rounded-lg overflow-hidden" style={{ background: P.paperDark, border: `1px solid ${P.border}`, boxShadow: `0 2px 8px ${P.shadow}` }}>
+          <div className="px-5 py-4" style={{ background: P.deepTea, color: P.paper }}>
+            <div style={{ fontFamily: 'Spectral, serif', fontSize: 11, letterSpacing: 2, opacity: 0.75 }} className="uppercase">
+              {mode === 'final' ? 'Live winner' : selectedProfile ? `${selectedProfile.name}'s choices` : 'Personal choices'}
+            </div>
+            <h3 style={{ fontFamily: 'Fraunces, serif', fontSize: 26, fontWeight: 500 }}>
+              {BASE_LABELS[base]} Plan
+            </h3>
+          </div>
+          <div className="p-5 space-y-5">
+            {getDaysForBase(base).map((day, idx) => (
+              <div key={day.id} className="rounded p-4" style={{ background: P.paper, border: `1px solid ${P.borderSoft}` }}>
+                <div className="mb-3">
+                  <div style={{ fontFamily: 'Spectral, serif', fontSize: 11, letterSpacing: 1.5, color: P.midTea }} className="uppercase">
+                    Day {idx + 1} · {formatDayDate(day)}
+                  </div>
+                  <h4 style={{ fontFamily: 'Fraunces, serif', fontSize: 20, fontWeight: 500, color: P.ink }}>
+                    {day.theme}
+                  </h4>
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                  {['morning', 'afternoon', 'night'].map((slotKey) => {
+                    const selected = mode === 'personal'
+                      ? getPersonalOptions(day, base, slotKey, votes, comments, selectedProfileId)
+                      : getWinningOptions(day, base, slotKey, votes);
+                    return (
+                      <div key={slotKey}>
+                        <div className="mb-2" style={{ fontFamily: 'Spectral, serif', fontSize: 12, color: P.midTea, letterSpacing: 1.2, textTransform: 'uppercase' }}>
+                          {SLOT_META[slotKey].label}
+                        </div>
+                        <div className="space-y-2">
+                          {selected.map((option) => {
+                            const target = getTargetKey(base, day.id, slotKey, option.id);
+                            const count = getOptionVotes(votes, base, day.id, slotKey, option.id).length;
+                            const personalComments = mode === 'personal'
+                              ? comments.filter((comment) => comment.userId === selectedProfileId && comment.target === target)
+                              : [];
+                            return (
+                              <SmallOption
+                                key={option.id}
+                                option={option}
+                                base={base}
+                                count={mode === 'final' ? count : undefined}
+                                totalProfiles={profiles.length}
+                                comments={personalComments}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -1409,7 +1847,7 @@ function SummaryPanel({ open, onClose, profiles, baseVotes, votes, gameVotes, ac
                   <div className="flex items-center gap-2">
                     <AvatarStack profiles={voters} size={22} max={6} />
                     <span style={{ fontFamily: 'Spectral, serif', fontSize: 12, color: P.midTea }}>
-                      {voters.length}
+                      {voters.length} · {votePercent(voters.length, profiles.length)}%
                     </span>
                   </div>
                 </div>
@@ -1447,6 +1885,9 @@ function SummaryPanel({ open, onClose, profiles, baseVotes, votes, gameVotes, ac
                           <div key={option.id} className="flex items-start justify-between gap-3 py-1">
                             <div style={{ fontFamily: 'Spectral, serif', fontSize: 13, color: P.ink }}>
                               {option.title}
+                              <span style={{ color: P.midTea, marginLeft: 6 }}>
+                                {voters.length} · {votePercent(voters.length, profiles.length)}%
+                              </span>
                             </div>
                             <AvatarStack profiles={voters} size={20} max={6} />
                           </div>
@@ -1499,6 +1940,8 @@ export default function App() {
 
   const [currentUserId, setCurrentUserId] = useState(null);
   const [activeBase, setActiveBase] = useState('kotagiri');
+  const [activeView, setActiveView] = useState('vote');
+  const [preferredProfileId, setPreferredProfileId] = useState(null);
   const [openDayIdx, setOpenDayIdx] = useState(0);
   const [summaryOpen, setSummaryOpen] = useState(false);
 
@@ -1531,6 +1974,12 @@ export default function App() {
       clearInterval(fallback);
     };
   }, [reload, applySharedState]);
+
+  useEffect(() => {
+    if (!preferredProfileId && currentUserId) {
+      setPreferredProfileId(currentUserId);
+    }
+  }, [preferredProfileId, currentUserId]);
 
   // create profile
   const addProfile = async (name, age) => {
@@ -1643,6 +2092,8 @@ export default function App() {
 
   const me = profiles.find((p) => p.id === currentUserId);
   const days = activeBase === 'kotagiri' ? KOTAGIRI_DAYS : COONOOR_DAYS;
+  const finalBases = getWinningBases(baseVotes, profiles);
+  const personalBase = preferredProfileId && baseVotes[preferredProfileId] ? baseVotes[preferredProfileId] : activeBase;
 
   const kotagiriVoters = profiles.filter((p) => baseVotes[p.id] === 'kotagiri');
   const coonoorVoters = profiles.filter((p) => baseVotes[p.id] === 'coonoor');
@@ -1746,6 +2197,31 @@ export default function App() {
         </header>
 
         <main className="max-w-6xl mx-auto px-5 sm:px-8 py-10 space-y-12">
+          <nav className="flex gap-2 flex-wrap" aria-label="Planner views">
+            {[
+              ['vote', 'Vote & Discuss'],
+              ['final', 'Final Itinerary'],
+              ['personal', 'My Preferred Itinerary'],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setActiveView(id)}
+                className="px-4 py-2 rounded"
+                style={{
+                  background: activeView === id ? P.deepTea : P.paperDark,
+                  color: activeView === id ? P.paper : P.deepTea,
+                  border: `1px solid ${activeView === id ? P.deepTea : P.border}`,
+                  fontFamily: 'Spectral, serif',
+                  fontSize: 14,
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+
+          {activeView === 'vote' && (
+            <>
           {/* BASE DECISION */}
           <section>
             <div className="flex items-end justify-between gap-4 mb-5 flex-wrap">
@@ -1846,6 +2322,38 @@ export default function App() {
             currentUserId={currentUserId}
             onVote={voteForGame}
           />
+            </>
+          )}
+
+          {activeView === 'final' && (
+            <ItineraryView
+              title="Final Itinerary"
+              eyebrow="Live itinerary"
+              description="This keeps rebuilding from the latest votes. Ties show every tied option; empty slots show all available options."
+              bases={finalBases}
+              votes={votes}
+              comments={comments}
+              profiles={profiles}
+              gameVotes={gameVotes}
+              mode="final"
+            />
+          )}
+
+          {activeView === 'personal' && (
+            <ItineraryView
+              title="My Preferred Itinerary"
+              eyebrow="Personal lens"
+              description="Choose a family member to see their own selected options. If they commented without voting, those commented options are surfaced too."
+              bases={[personalBase]}
+              votes={votes}
+              comments={comments}
+              profiles={profiles}
+              gameVotes={gameVotes}
+              mode="personal"
+              selectedProfileId={preferredProfileId || currentUserId}
+              onSelectedProfileChange={setPreferredProfileId}
+            />
+          )}
 
           {/* FOOTER */}
           <footer className="text-center py-8" style={{ fontFamily: 'Spectral, serif', fontSize: 12, color: P.midTea, fontStyle: 'italic' }}>
